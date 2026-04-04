@@ -1,27 +1,54 @@
 {
-  "name": "sonacore-web",
+  "name": "@sona/shared",
   "version": "0.1.0",
-  "private": true,
-  "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "next lint"
+  "description": "Shared types and utilities for the Sona ecosystem",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./types": "./dist/types/index.js",
+    "./agenda": "./dist/agenda/index.js",
+    "./tags": "./dist/tags/index.js",
+    "./content": "./dist/content/index.js",
+    "./mermaid": "./dist/mermaid/index.js",
+    "./excel": "./dist/excel/index.js",
+    "./api": "./dist/api/index.js",
+    "./audio": "./dist/audio/index.js",
+    "./image": "./dist/image/index.js"
   },
-  "dependencies": {
-    "next": "^15.0.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "@supabase/supabase-js": "^2.0.0",
-    "lucide-react": "^0.400.0"
+  "typesVersions": {
+    "*": {
+      "types": ["./dist/types/index.d.ts"],
+      "agenda": ["./dist/agenda/index.d.ts"],
+      "tags": ["./dist/tags/index.d.ts"],
+      "content": ["./dist/content/index.d.ts"],
+      "mermaid": ["./dist/mermaid/index.d.ts"],
+      "excel": ["./dist/excel/index.d.ts"],
+      "api": ["./dist/api/index.d.ts"],
+      "audio": ["./dist/audio/index.d.ts"],
+      "image": ["./dist/image/index.d.ts"]
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build"
+  },
+  "peerDependencies": {
+    "exceljs": "^4.0.0",
+    "mermaid": "^11.0.0"
+  },
+  "peerDependenciesMeta": {
+    "exceljs": { "optional": true },
+    "mermaid": { "optional": true }
   },
   "devDependencies": {
-    "typescript": "^5.0.0",
-    "@types/node": "^20.0.0",
-    "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0",
-    "tailwindcss": "^3.4.0",
-    "autoprefixer": "^10.4.0",
-    "postcss": "^8.4.0"
-  }
+    "typescript": "^5.7.0",
+    "exceljs": "^4.4.0",
+    "mermaid": "^11.4.0"
+  },
+  "files": ["dist"],
+  "license": "UNLICENSED"
 }
