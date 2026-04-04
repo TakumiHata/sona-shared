@@ -3,38 +3,22 @@
   "version": "0.1.0",
   "description": "Shared types and utilities for the Sona ecosystem",
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
   "exports": {
-    ".": "./dist/index.js",
-    "./types": "./dist/types/index.js",
-    "./agenda": "./dist/agenda/index.js",
-    "./tags": "./dist/tags/index.js",
-    "./content": "./dist/content/index.js",
-    "./mermaid": "./dist/mermaid/index.js",
-    "./excel": "./dist/excel/index.js",
-    "./api": "./dist/api/index.js",
-    "./audio": "./dist/audio/index.js",
-    "./image": "./dist/image/index.js"
-  },
-  "typesVersions": {
-    "*": {
-      "types": ["./dist/types/index.d.ts"],
-      "agenda": ["./dist/agenda/index.d.ts"],
-      "tags": ["./dist/tags/index.d.ts"],
-      "content": ["./dist/content/index.d.ts"],
-      "mermaid": ["./dist/mermaid/index.d.ts"],
-      "excel": ["./dist/excel/index.d.ts"],
-      "api": ["./dist/api/index.d.ts"],
-      "audio": ["./dist/audio/index.d.ts"],
-      "image": ["./dist/image/index.d.ts"]
-    }
+    ".": "./src/index.ts",
+    "./types": "./src/types/index.ts",
+    "./agenda": "./src/agenda/index.ts",
+    "./tags": "./src/tags/index.ts",
+    "./content": "./src/content/index.ts",
+    "./mermaid": "./src/mermaid/index.ts",
+    "./excel": "./src/excel/index.ts",
+    "./api": "./src/api/index.ts",
+    "./audio": "./src/audio/index.ts",
+    "./image": "./src/image/index.ts"
   },
   "scripts": {
-    "build": "tsc",
-    "dev": "tsc --watch",
-    "clean": "rm -rf dist",
-    "prepublishOnly": "npm run build"
+    "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
     "exceljs": "^4.0.0",
@@ -49,6 +33,6 @@
     "exceljs": "^4.4.0",
     "mermaid": "^11.4.0"
   },
-  "files": ["dist"],
+  "files": ["src"],
   "license": "UNLICENSED"
 }

@@ -1,4 +1,4 @@
-import type { AgendaItem } from '../types/index.js';
+import type { AgendaItem } from '../types';
 
 const PREVIEW_ONLY_RE = /<preview-only>([\s\S]*?)<\/preview-only>/g;
 const FIXED_RE = /<fixed>([\s\S]*?)<\/fixed>/g;

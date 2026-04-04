@@ -1,4 +1,4 @@
-import type { EmbeddedImage } from '../types/index.js';
+import type { EmbeddedImage } from '../types';
 
 let renderCounter = 0;
 

@@ -1,4 +1,4 @@
-import type { EmbeddedTable } from '../types/index.js';
+import type { EmbeddedTable } from '../types';
 
 const MERMAID_BLOCK_RE = /```mermaid\n([\s\S]*?)```/g;
 const IMAGE_RE = /!\[([^\]]*)\]\(([^)]+)\)/g;

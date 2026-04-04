@@ -1,4 +1,4 @@
-import type { AgendaItem, FlatAgendaWithDepth } from '../types/index.js';
+import type { AgendaItem, FlatAgendaWithDepth } from '../types';
 
 const AGENDA_TAG_RE = /<agenda>([\s\S]*?)<\/agenda>/g;
 

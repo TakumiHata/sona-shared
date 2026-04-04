@@ -1,7 +1,7 @@
 import type ExcelJS from 'exceljs';
-import type { AgendaItem, FlatAgendaWithDepth } from '../types/index.js';
-import { flattenAgendasWithDepth } from '../agenda/index.js';
-import { fetchImageAsBuffer } from '../image/index.js';
+import type { AgendaItem, FlatAgendaWithDepth } from '../types';
+import { flattenAgendasWithDepth } from '../agenda';
+import { fetchImageAsBuffer } from '../image';
 
 // ── タグ定義 ──
 const TAG_TITLE = '{{title}}';
