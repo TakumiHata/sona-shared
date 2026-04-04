@@ -1,6 +1,6 @@
 import type { AgendaItem, FlatAgendaWithDepth } from '../types';
 
-const AGENDA_TAG_RE = /<agenda>([\s\S]*?)<\/agenda>/g;
+const AGENDA_TAG_RE = /<agenda[^>]*>([\s\S]*?)<\/agenda>/g;
 
 /** テキスト内に <agenda> タグが含まれているか */
 export function hasAgendaTags(text: string): boolean {
@@ -31,7 +31,7 @@ function parseWithAgendaTags(text: string): AgendaItem[] {
     let match;
     while ((match = re.exec(text)) !== null) {
         const tagStart = match.index;
-        const contentStart = tagStart + '<agenda>'.length;
+        const contentStart = tagStart + match[0].length - match[1].length - '</agenda>'.length;
         const contentEnd = contentStart + match[1].length;
         agendaRanges.push({ start: contentStart, end: contentEnd });
     }
@@ -46,7 +46,7 @@ function parseWithAgendaTags(text: string): AgendaItem[] {
 
         const trimmedLine = line.trim();
 
-        if (trimmedLine === '<agenda>' || trimmedLine === '</agenda>') {
+        if (trimmedLine.startsWith('<agenda') || trimmedLine === '</agenda>') {
             continue;
         }
 
