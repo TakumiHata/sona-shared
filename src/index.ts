@@ -5,3 +5,4 @@ export * from './content';
 export * from './api';
 export * from './audio';
 export * from './image';
+export * from './excel';
