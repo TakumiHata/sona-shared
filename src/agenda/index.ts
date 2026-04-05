@@ -265,9 +265,8 @@ export const deleteAgendaItem = (agendas: AgendaItem[], id: string): AgendaItem[
  */
 export const buildMarkdownFromAgendas = (
     agendas: AgendaItem[],
-    originalMarkdown: string
+    useAgendaTags: boolean
 ): string => {
-    const useAgendaTags = hasAgendaTags(originalMarkdown);
     const sections: string[] = [];
 
     const addAgenda = (items: AgendaItem[], depth: number) => {
