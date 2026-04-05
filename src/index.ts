@@ -2,6 +2,7 @@ export * from './types';
 export * from './agenda';
 export * from './tags';
 export * from './content';
+export * from './mermaid';
 export * from './api';
 export * from './audio';
 export * from './image';
