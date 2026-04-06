@@ -243,9 +243,9 @@ export const analyzeTemplate = async (
 
     const print_area = {
         data_start_row: firstTemplateRow,
-        data_end_row: Math.max(lastTemplateRow + 30, totalRows),
+        data_end_row: firstTemplateRow + 20,
         repeat_header: firstTemplateRow > 1,
-        footer_rows: Math.max(totalRows - lastTemplateRow, 0),
+        footer_rows: 0,
     };
 
     // 列範囲推定（初期値。ユーザーがUIで修正する前提）
