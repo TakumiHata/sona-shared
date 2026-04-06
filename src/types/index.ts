@@ -63,3 +63,43 @@ export interface TranscribeResponse {
 export interface FlatAgendaWithDepth extends AgendaItem {
     depth: number;
 }
+
+// ── mapping_json スキーマ ──
+
+export interface ColumnRegion {
+    tag: string;
+    col_start: string;
+    col_end: string;
+    label: string;
+}
+
+export interface PrintArea {
+    data_start_row: number;
+    data_end_row: number;
+    repeat_header: boolean;
+    footer_rows: number;
+}
+
+export interface GridDetection {
+    is_hougan: boolean;
+    base_cell_size: number | null;
+}
+
+export interface MappingJsonV3 {
+    version: 3;
+    detected_tags: string[];
+    print_area: PrintArea;
+    column_regions: ColumnRegion[];
+    grid_detection: GridDetection;
+}
+
+export interface MappingJsonV2 {
+    version: 2;
+    detected_tags: string[];
+    rows_per_page: number;
+}
+
+export type MappingJson = MappingJsonV2 | MappingJsonV3;
+
+export const isMappingV3 = (json: unknown): json is MappingJsonV3 =>
+    json != null && typeof json === 'object' && (json as Record<string, unknown>).version === 3;
