@@ -840,10 +840,19 @@ export const generateExcelFromV3Template = async (
         // テンプレート行のスタイルを適用
         applyStylesLocal(row, templateStyles);
 
-        // 列範囲ベースでデータを書き込む
+        // 列範囲ベースでデータを書き込む（セル結合 + 書き込み）
         for (const region of column_regions) {
             const startCol = colLetterToNumber(region.col_start);
+            const endCol = colLetterToNumber(region.col_end);
             const value = resolvedValues.get(region.tag) || '';
+
+            // col_start 〜 col_end を結合（複数列にまたがる場合）
+            if (startCol !== endCol) {
+                try {
+                    worksheet.mergeCells(currentRow, startCol, currentRow, endCol);
+                } catch { /* already merged */ }
+            }
+
             const cell = row.getCell(startCol);
             cell.value = value;
             cell.alignment = { ...cell.alignment, wrapText: true, vertical: 'top' };
