@@ -8,6 +8,15 @@ const TAG_SPEAKER = '{{speaker}}';
 const TAG_CONTENT = '{{content}}';
 const ALL_TAGS = [TAG_TITLE, TAG_SPEAKER, TAG_CONTENT];
 
+// v3 範囲指定タグ
+const RANGE_TAG_PATTERN = /\{\{(title|speaker|content):(start|end)\}\}/g;
+const RANGE_TAGS = [
+    '{{title:start}}', '{{title:end}}',
+    '{{speaker:start}}', '{{speaker:end}}',
+    '{{content:start}}', '{{content:end}}',
+];
+const ALL_TAGS_INCLUDING_RANGE = [...ALL_TAGS, ...RANGE_TAGS];
+
 const DEFAULT_ROWS_PER_PAGE = 40;
 
 /**
@@ -35,7 +44,7 @@ const extractCellText = (value: unknown): string => {
 const cellContainsTag = (value: unknown): boolean => {
     const text = extractCellText(value);
     if (!text) return false;
-    return ALL_TAGS.some(tag => text.includes(tag));
+    return ALL_TAGS_INCLUDING_RANGE.some(tag => text.includes(tag));
 };
 
 const resolveTagValue = (template: string, item: FlatAgendaWithDepth): string => {
@@ -44,7 +53,9 @@ const resolveTagValue = (template: string, item: FlatAgendaWithDepth): string =>
     resolved = resolved.replace(TAG_TITLE, `${indent}${item.title}`);
     resolved = resolved.replace(TAG_SPEAKER, item.speaker || '');
     resolved = resolved.replace(TAG_CONTENT, item.refinedTranscript || item.rawTranscript || '');
-    return resolved;
+    // start/end タグを除去
+    resolved = resolved.replace(RANGE_TAG_PATTERN, '');
+    return resolved.trim();
 };
 
 const findTemplateRows = (worksheet: ExcelJS.Worksheet): number[] => {
@@ -78,7 +89,7 @@ export const detectTags = async (
     worksheet.eachRow({ includeEmpty: false }, (row) => {
         row.eachCell({ includeEmpty: false }, (cell) => {
             const val = extractCellText(cell.value);
-            for (const tag of ALL_TAGS) {
+            for (const tag of ALL_TAGS_INCLUDING_RANGE) {
                 if (val.includes(tag)) {
                     tags.add(tag);
                 }
@@ -204,6 +215,40 @@ const colLetterToNumber = (letters: string): number => {
 /**
  * テンプレートExcelを解析し、v3 mapping_json を生成する
  */
+/**
+ * start/endタグの位置情報
+ */
+interface RangeTagPosition {
+    tag: string;       // "title" | "speaker" | "content"
+    type: 'start' | 'end';
+    row: number;
+    col: number;
+}
+
+/**
+ * ワークシートからstart/endタグの位置を検出する
+ */
+const findRangeTagPositions = (worksheet: ExcelJS.Worksheet): RangeTagPosition[] => {
+    const positions: RangeTagPosition[] = [];
+    worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+        row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
+            const text = extractCellText(cell.value);
+            if (!text) return;
+            const regex = /\{\{(title|speaker|content):(start|end)\}\}/g;
+            let match;
+            while ((match = regex.exec(text)) !== null) {
+                positions.push({
+                    tag: match[1],
+                    type: match[2] as 'start' | 'end',
+                    row: rowNumber,
+                    col: colNumber,
+                });
+            }
+        });
+    });
+    return positions;
+};
+
 export const analyzeTemplate = async (
     ExcelJSModule: typeof ExcelJS,
     buffer: Buffer
@@ -222,40 +267,90 @@ export const analyzeTemplate = async (
         };
     }
 
-    // タグ検出
+    // 全タグ検出
     const tags = new Set<string>();
     worksheet.eachRow({ includeEmpty: false }, (row) => {
         row.eachCell({ includeEmpty: false }, (cell) => {
             const val = extractCellText(cell.value);
-            for (const tag of ALL_TAGS) {
+            for (const tag of ALL_TAGS_INCLUDING_RANGE) {
                 if (val.includes(tag)) tags.add(tag);
             }
         });
     });
 
-    const templateRowNumbers = findTemplateRows(worksheet);
     const colCount = worksheet.columnCount || 20;
 
-    // print_area 推定
-    const firstTemplateRow = templateRowNumbers.length > 0 ? templateRowNumbers[0] : 1;
-    const lastTemplateRow = templateRowNumbers.length > 0 ? templateRowNumbers[templateRowNumbers.length - 1] : 1;
-    const totalRows = worksheet.rowCount;
+    // start/end タグの検出
+    const rangePositions = findRangeTagPositions(worksheet);
+    const hasRangeTags = rangePositions.length > 0;
 
-    // フッター行数: テンプレート行より下の行数
-    const footerRows = Math.max(totalRows - lastTemplateRow, 0);
+    let print_area;
+    let column_regions: ColumnRegion[];
 
-    // データ終了行: ページ下部を推定（テンプレート行から下に40行、またはワークシート全行）
-    const dataEndRow = Math.max(lastTemplateRow + 30, totalRows);
+    if (hasRangeTags) {
+        // start/end タグからデータ領域と列範囲を決定
+        const tagGroups = new Map<string, { start?: RangeTagPosition; end?: RangeTagPosition }>();
+        for (const pos of rangePositions) {
+            if (!tagGroups.has(pos.tag)) tagGroups.set(pos.tag, {});
+            const group = tagGroups.get(pos.tag)!;
+            group[pos.type] = pos;
+        }
 
-    const print_area = {
-        data_start_row: firstTemplateRow,
-        data_end_row: dataEndRow,
-        repeat_header: firstTemplateRow > 1,
-        footer_rows: footerRows,
-    };
+        // データ領域の行範囲 = 全start/endタグの行範囲の和集合
+        let minRow = Infinity;
+        let maxRow = 0;
+        for (const pos of rangePositions) {
+            minRow = Math.min(minRow, pos.row);
+            maxRow = Math.max(maxRow, pos.row);
+        }
 
-    // 列範囲検出
-    const column_regions = detectColumnRegions(worksheet, templateRowNumbers, colCount);
+        print_area = {
+            data_start_row: minRow,
+            data_end_row: maxRow,
+            repeat_header: minRow > 1,
+            footer_rows: 0,
+        };
+
+        // 列範囲 = 各タグのstart列〜end列
+        column_regions = [];
+        for (const [tagName, group] of tagGroups) {
+            if (!group.start) continue;
+            const startCol = group.start.col;
+            const endCol = group.end?.col ?? group.start.col;
+            const colStart = colNumberToLetter(Math.min(startCol, endCol));
+            const colEnd = colNumberToLetter(Math.max(startCol, endCol));
+
+            // ラベル: startタグの直上行のセル値
+            let label = `{{${tagName}}}`;
+            if (group.start.row > 1) {
+                const headerRow = worksheet.getRow(group.start.row - 1);
+                const headerText = extractCellText(headerRow.getCell(group.start.col).value);
+                if (headerText) label = headerText;
+            }
+
+            column_regions.push({
+                tag: `{{${tagName}}}`,
+                col_start: colStart,
+                col_end: colEnd,
+                label,
+            });
+        }
+    } else {
+        // フォールバック: 従来のタグ方式で推定
+        const templateRowNumbers = findTemplateRows(worksheet);
+        const firstTemplateRow = templateRowNumbers.length > 0 ? templateRowNumbers[0] : 1;
+        const lastTemplateRow = templateRowNumbers.length > 0 ? templateRowNumbers[templateRowNumbers.length - 1] : 1;
+        const totalRows = worksheet.rowCount;
+
+        print_area = {
+            data_start_row: firstTemplateRow,
+            data_end_row: Math.max(lastTemplateRow + 30, totalRows),
+            repeat_header: firstTemplateRow > 1,
+            footer_rows: Math.max(totalRows - lastTemplateRow, 0),
+        };
+
+        column_regions = detectColumnRegions(worksheet, templateRowNumbers, colCount);
+    }
 
     // 方眼判定
     const grid_detection = detectHouganGrid(worksheet);
