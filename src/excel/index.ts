@@ -1,7 +1,6 @@
 import type ExcelJS from 'exceljs';
 import type { AgendaItem, FlatAgendaWithDepth } from '../types';
 import { flattenAgendasWithDepth } from '../agenda';
-import { fetchImageAsBuffer } from '../image';
 
 // ── タグ定義 ──
 const TAG_TITLE = '{{title}}';
@@ -11,9 +10,32 @@ const ALL_TAGS = [TAG_TITLE, TAG_SPEAKER, TAG_CONTENT];
 
 const DEFAULT_ROWS_PER_PAGE = 40;
 
+/**
+ * セル値からプレーンテキストを抽出する。
+ * RichText / Formula / その他の型に対応。
+ */
+const extractCellText = (value: unknown): string => {
+    if (typeof value === 'string') return value;
+    if (value == null) return '';
+    if (typeof value === 'object') {
+        // RichText: { richText: [{ text: '...' }, ...] }
+        if ('richText' in value && Array.isArray((value as Record<string, unknown>).richText)) {
+            return ((value as Record<string, unknown>).richText as { text: string }[])
+                .map(r => r.text)
+                .join('');
+        }
+        // Formula: { formula: '=...', result: '...' }
+        if ('result' in value) {
+            return String((value as Record<string, unknown>).result || '');
+        }
+    }
+    return String(value);
+};
+
 const cellContainsTag = (value: unknown): boolean => {
-    if (typeof value !== 'string') return false;
-    return ALL_TAGS.some(tag => value.includes(tag));
+    const text = extractCellText(value);
+    if (!text) return false;
+    return ALL_TAGS.some(tag => text.includes(tag));
 };
 
 const resolveTagValue = (template: string, item: FlatAgendaWithDepth): string => {
@@ -55,7 +77,7 @@ export const detectTags = async (
 
     worksheet.eachRow({ includeEmpty: false }, (row) => {
         row.eachCell({ includeEmpty: false }, (cell) => {
-            const val = String(cell.value || '');
+            const val = extractCellText(cell.value);
             for (const tag of ALL_TAGS) {
                 if (val.includes(tag)) {
                     tags.add(tag);
@@ -67,17 +89,45 @@ export const detectTags = async (
     return Array.from(tags);
 };
 
+/**
+ * スタイルオブジェクトを深いコピーで複製する
+ */
+const deepCopyStyle = (style: {
+    font?: Partial<ExcelJS.Font>;
+    fill?: ExcelJS.Fill;
+    border?: Partial<ExcelJS.Borders>;
+    alignment?: Partial<ExcelJS.Alignment>;
+    numFmt?: string;
+}) => ({
+    font: style.font ? JSON.parse(JSON.stringify(style.font)) : undefined,
+    fill: style.fill ? JSON.parse(JSON.stringify(style.fill)) : undefined,
+    border: style.border ? JSON.parse(JSON.stringify(style.border)) : undefined,
+    alignment: style.alignment ? JSON.parse(JSON.stringify(style.alignment)) : undefined,
+    numFmt: style.numFmt,
+});
+
+interface CellStyle {
+    col: number;
+    font?: Partial<ExcelJS.Font>;
+    fill?: ExcelJS.Fill;
+    border?: Partial<ExcelJS.Borders>;
+    alignment?: Partial<ExcelJS.Alignment>;
+    numFmt?: string;
+}
+
+const captureCellStyle = (cell: ExcelJS.Cell, col: number): CellStyle => ({
+    col,
+    font: cell.font ? JSON.parse(JSON.stringify(cell.font)) : undefined,
+    fill: cell.fill ? JSON.parse(JSON.stringify(cell.fill)) as ExcelJS.Fill : undefined,
+    border: cell.border ? JSON.parse(JSON.stringify(cell.border)) : undefined,
+    alignment: cell.alignment ? JSON.parse(JSON.stringify(cell.alignment)) : undefined,
+    numFmt: cell.numFmt || undefined,
+});
+
 interface TemplateRowData {
     cells: { col: number; template: string; isTag: boolean }[];
     height: number | undefined;
-    styles: {
-        col: number;
-        font?: Partial<ExcelJS.Font>;
-        fill?: ExcelJS.Fill;
-        border?: Partial<ExcelJS.Borders>;
-        alignment?: Partial<ExcelJS.Alignment>;
-        numFmt?: string;
-    }[];
+    styles: CellStyle[];
 }
 
 /**
@@ -111,82 +161,79 @@ export const generateExcelFromTagTemplate = async (
     const lastTemplateRow = templateRowNumbers[templateRowNumbers.length - 1];
     const colCount = worksheet.columnCount || 20;
 
-    // Step 2: テンプレート行のデータとスタイルを記憶
+    // Step 1: 列幅を保存
+    const columnWidths: number[] = [];
+    for (let c = 1; c <= colCount; c++) {
+        const col = worksheet.getColumn(c);
+        columnWidths.push(col.width || 8.43);
+    }
+
+    // Step 2: 結合セル情報を保存
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const merges: string[] = (worksheet as any).model?.merges
+        ? [...(worksheet as any).model.merges]
+        : [];
+
+    // Step 3: テンプレート行のデータとスタイルを記憶（タグを含む行のみ）
     const templateRowsData: TemplateRowData[] = [];
-    for (let r = firstTemplateRow; r <= lastTemplateRow; r++) {
+    for (const r of templateRowNumbers) {
         const row = worksheet.getRow(r);
         const cells: TemplateRowData['cells'] = [];
-        const styles: TemplateRowData['styles'] = [];
+        const styles: CellStyle[] = [];
 
         for (let c = 1; c <= colCount; c++) {
             const cell = row.getCell(c);
-            const val = String(cell.value || '');
-            cells.push({ col: c, template: val, isTag: cellContainsTag(val) });
-            styles.push({
-                col: c,
-                font: cell.font ? { ...cell.font } : undefined,
-                fill: cell.fill ? { ...cell.fill } as ExcelJS.Fill : undefined,
-                border: cell.border ? { ...cell.border } : undefined,
-                alignment: cell.alignment ? { ...cell.alignment } : undefined,
-                numFmt: cell.numFmt || undefined,
-            });
+            const val = extractCellText(cell.value);
+            cells.push({ col: c, template: val, isTag: cellContainsTag(cell.value) });
+            styles.push(captureCellStyle(cell, c));
         }
 
         templateRowsData.push({ cells, height: row.height || undefined, styles });
     }
 
-    // Step 3: ヘッダー行のデータを記憶
+    // Step 4: ヘッダー行のデータを記憶
     interface HeaderRowData {
         cells: { col: number; value: unknown }[];
         height: number | undefined;
-        styles: TemplateRowData['styles'];
+        styles: CellStyle[];
     }
 
     const headerRowsData: HeaderRowData[] = [];
     for (let r = 1; r < firstTemplateRow; r++) {
         const row = worksheet.getRow(r);
         const cells: HeaderRowData['cells'] = [];
-        const styles: TemplateRowData['styles'] = [];
+        const styles: CellStyle[] = [];
 
         for (let c = 1; c <= colCount; c++) {
             const cell = row.getCell(c);
             cells.push({ col: c, value: cell.value });
-            styles.push({
-                col: c,
-                font: cell.font ? { ...cell.font } : undefined,
-                fill: cell.fill ? { ...cell.fill } as ExcelJS.Fill : undefined,
-                border: cell.border ? { ...cell.border } : undefined,
-                alignment: cell.alignment ? { ...cell.alignment } : undefined,
-                numFmt: cell.numFmt || undefined,
-            });
+            styles.push(captureCellStyle(cell, c));
         }
         headerRowsData.push({ cells, height: row.height || undefined, styles });
     }
 
-    // Step 4: フッター行のデータを記憶
+    // Step 5: フッター行のデータを記憶
     const totalOriginalRows = worksheet.rowCount;
     const footerRowsData: HeaderRowData[] = [];
     for (let r = lastTemplateRow + 1; r <= totalOriginalRows; r++) {
         const row = worksheet.getRow(r);
         const cells: HeaderRowData['cells'] = [];
-        const styles: TemplateRowData['styles'] = [];
+        const styles: CellStyle[] = [];
 
         for (let c = 1; c <= colCount; c++) {
             const cell = row.getCell(c);
             cells.push({ col: c, value: cell.value });
-            styles.push({
-                col: c,
-                font: cell.font ? { ...cell.font } : undefined,
-                fill: cell.fill ? { ...cell.fill } as ExcelJS.Fill : undefined,
-                border: cell.border ? { ...cell.border } : undefined,
-                alignment: cell.alignment ? { ...cell.alignment } : undefined,
-                numFmt: cell.numFmt || undefined,
-            });
+            styles.push(captureCellStyle(cell, c));
         }
         footerRowsData.push({ cells, height: row.height || undefined, styles });
     }
 
-    // Step 5: クリア
+    // Step 6: クリア（結合セルも解除）
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const wsModel = worksheet as any;
+    if (wsModel.model?.merges) {
+        wsModel.model.merges = [];
+    }
     for (let r = firstTemplateRow; r <= totalOriginalRows; r++) {
         const row = worksheet.getRow(r);
         for (let c = 1; c <= colCount; c++) {
@@ -194,22 +241,50 @@ export const generateExcelFromTagTemplate = async (
         }
     }
 
-    // Step 6: 議題データを展開
+    // Step 7: ヘッダー部分の結合セルを再適用
+    for (const merge of merges) {
+        const match = merge.match(/^([A-Z]+)(\d+):([A-Z]+)(\d+)$/);
+        if (!match) continue;
+        const startRow = parseInt(match[2], 10);
+        if (startRow < firstTemplateRow) {
+            worksheet.mergeCells(merge);
+        }
+    }
+
+    // テンプレート行の結合セル情報を抽出（行オフセットで保存）
+    const templateMerges: { merge: string; rowOffset: number; startRow: number; endRow: number }[] = [];
+    for (const merge of merges) {
+        const match = merge.match(/^([A-Z]+)(\d+):([A-Z]+)(\d+)$/);
+        if (!match) continue;
+        const startRow = parseInt(match[2], 10);
+        const endRow = parseInt(match[4], 10);
+        if (startRow >= firstTemplateRow && endRow <= lastTemplateRow) {
+            templateMerges.push({
+                merge,
+                rowOffset: startRow - firstTemplateRow,
+                startRow,
+                endRow,
+            });
+        }
+    }
+
+    // Step 8: 議題データを展開
     const headerRowCount = headerRowsData.length;
     const footerRowCount = footerRowsData.length;
-    const dataRowsPerPage = rowsPerPage - headerRowCount - footerRowCount;
+    const dataRowsPerPage = Math.max(rowsPerPage - headerRowCount - footerRowCount, 1);
 
     let currentRow = firstTemplateRow;
     let rowsOnCurrentPage = 0;
 
-    const applyStyles = (row: ExcelJS.Row, styles: TemplateRowData['styles']) => {
+    const applyStyles = (row: ExcelJS.Row, styles: CellStyle[]) => {
         for (const s of styles) {
             const cell = row.getCell(s.col);
-            if (s.font) cell.font = s.font;
-            if (s.fill) cell.fill = s.fill;
-            if (s.border) cell.border = s.border;
-            if (s.alignment) cell.alignment = s.alignment;
-            if (s.numFmt) cell.numFmt = s.numFmt;
+            const copied = deepCopyStyle(s);
+            if (copied.font) cell.font = copied.font;
+            if (copied.fill) cell.fill = copied.fill;
+            if (copied.border) cell.border = copied.border;
+            if (copied.alignment) cell.alignment = copied.alignment;
+            if (copied.numFmt) cell.numFmt = copied.numFmt;
         }
     };
 
@@ -224,6 +299,20 @@ export const generateExcelFromTagTemplate = async (
             applyStyles(row, hd.styles);
             row.commit();
         }
+
+        // ヘッダー部分の結合セルを再適用（行オフセット調整）
+        for (const merge of merges) {
+            const match = merge.match(/^([A-Z]+)(\d+):([A-Z]+)(\d+)$/);
+            if (!match) continue;
+            const origStartRow = parseInt(match[2], 10);
+            const origEndRow = parseInt(match[4], 10);
+            if (origStartRow < firstTemplateRow) {
+                const offset = startRow - 1;
+                const newMerge = `${match[1]}${origStartRow + offset}:${match[3]}${origEndRow + offset}`;
+                try { worksheet.mergeCells(newMerge); } catch { /* already merged */ }
+            }
+        }
+
         return startRow + headerRowsData.length;
     };
 
@@ -241,14 +330,14 @@ export const generateExcelFromTagTemplate = async (
         return startRow + footerRowsData.length;
     };
 
+    const templateRowCount = templateRowsData.length;
+
     for (let agendaIdx = 0; agendaIdx < flatAgendas.length; agendaIdx++) {
         const item = flatAgendas[agendaIdx];
 
         if (dataRowsPerPage > 0 && rowsOnCurrentPage >= dataRowsPerPage) {
             currentRow = writeFooterRows(currentRow);
 
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const wsModel = worksheet as any;
             if (!wsModel.pageSetup) wsModel.pageSetup = {};
             if (!wsModel.rowBreaks) wsModel.rowBreaks = [];
             wsModel.rowBreaks.push(currentRow - 1);
@@ -257,7 +346,10 @@ export const generateExcelFromTagTemplate = async (
             rowsOnCurrentPage = 0;
         }
 
-        for (const trd of templateRowsData) {
+        const dataStartRow = currentRow;
+
+        for (let trdIdx = 0; trdIdx < templateRowsData.length; trdIdx++) {
+            const trd = templateRowsData[trdIdx];
             const row = worksheet.getRow(currentRow);
             if (trd.height !== undefined) row.height = trd.height;
 
@@ -279,9 +371,23 @@ export const generateExcelFromTagTemplate = async (
             currentRow++;
             rowsOnCurrentPage++;
         }
+
+        // テンプレート行の結合セルをデータ行に再適用
+        for (const tm of templateMerges) {
+            const match = tm.merge.match(/^([A-Z]+)(\d+):([A-Z]+)(\d+)$/);
+            if (!match) continue;
+            const rowShift = dataStartRow - firstTemplateRow;
+            const newMerge = `${match[1]}${parseInt(match[2], 10) + rowShift}:${match[3]}${parseInt(match[4], 10) + rowShift}`;
+            try { worksheet.mergeCells(newMerge); } catch { /* skip if overlap */ }
+        }
     }
 
     writeFooterRows(currentRow);
+
+    // 列幅を復元
+    for (let c = 1; c <= columnWidths.length; c++) {
+        worksheet.getColumn(c).width = columnWidths[c - 1];
+    }
 
     const buffer = await workbook.xlsx.writeBuffer();
     return Buffer.from(buffer as ArrayBuffer);
@@ -355,91 +461,6 @@ export const generateExcelBuffer = async (
         row.alignment = { vertical: 'top', wrapText: true };
         row.commit();
     });
-
-    // --- SHEET 3: 図表（enrichedContent がある場合のみ） ---
-    const hasRichContent = flatAgendas.some(a => a.enrichedContent);
-    if (hasRichContent) {
-        const sheet3 = workbook.addWorksheet('図表');
-        let sheetRow = 1;
-
-        for (const item of flatAgendas) {
-            const ec = item.enrichedContent;
-            if (!ec) continue;
-
-            const titleRow = sheet3.getRow(sheetRow);
-            titleRow.getCell(1).value = item.title;
-            titleRow.getCell(1).font = { bold: true, size: 14 };
-            titleRow.commit();
-            sheetRow++;
-
-            for (const img of ec.images) {
-                try {
-                    const imageId = workbook.addImage({ base64: img.base64, extension: 'png' });
-                    const maxW = 500;
-                    let w = img.width;
-                    let h = img.height;
-                    if (w > maxW) { h = h * (maxW / w); w = maxW; }
-                    sheet3.addImage(imageId, {
-                        tl: { col: 0, row: sheetRow - 1 } as ExcelJS.Anchor,
-                        ext: { width: w, height: h },
-                    });
-                    sheetRow += Math.max(Math.ceil(h / 20), 1);
-                } catch (e) {
-                    console.warn(`[Excel] Failed to embed image for "${item.title}":`, e);
-                }
-            }
-
-            for (const url of ec.imageUrls) {
-                const fetched = await fetchImageAsBuffer(url);
-                if (!fetched) continue;
-                try {
-                    const imageId = workbook.addImage({
-                        buffer: fetched.buffer as unknown as ExcelJS.Buffer,
-                        extension: fetched.ext,
-                    });
-                    sheet3.addImage(imageId, {
-                        tl: { col: 0, row: sheetRow - 1 } as ExcelJS.Anchor,
-                        ext: { width: 400, height: 300 },
-                    });
-                    sheetRow += 16;
-                } catch (e) {
-                    console.warn(`[Excel] Failed to embed URL image:`, e);
-                }
-            }
-
-            for (const tbl of ec.tables) {
-                const hRow = sheet3.getRow(sheetRow);
-                tbl.headers.forEach((h, i) => {
-                    const cell = hRow.getCell(i + 1);
-                    cell.value = h;
-                    cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4472C4' } };
-                    cell.border = {
-                        top: { style: 'thin' }, bottom: { style: 'thin' },
-                        left: { style: 'thin' }, right: { style: 'thin' },
-                    };
-                });
-                hRow.commit();
-                sheetRow++;
-
-                for (const row of tbl.rows) {
-                    const dataRow = sheet3.getRow(sheetRow);
-                    row.forEach((val, i) => {
-                        const cell = dataRow.getCell(i + 1);
-                        cell.value = val;
-                        cell.border = {
-                            top: { style: 'thin' }, bottom: { style: 'thin' },
-                            left: { style: 'thin' }, right: { style: 'thin' },
-                        };
-                    });
-                    dataRow.commit();
-                    sheetRow++;
-                }
-                sheetRow++;
-            }
-            sheetRow++;
-        }
-    }
 
     const buffer = await workbook.xlsx.writeBuffer();
     return Buffer.from(buffer);
