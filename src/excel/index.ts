@@ -557,9 +557,8 @@ export const generateExcelFromTagTemplate = async (
         if (dataRowsPerPage > 0 && rowsOnCurrentPage >= dataRowsPerPage) {
             currentRow = writeFooterRows(currentRow);
 
-            if (!wsModel.pageSetup) wsModel.pageSetup = {};
-            if (!wsModel.rowBreaks) wsModel.rowBreaks = [];
-            wsModel.rowBreaks.push(currentRow - 1);
+            // ページブレークを挿入（フッター直後の行に設定）
+            worksheet.getRow(currentRow).addPageBreak();
 
             currentRow = writeHeaderRows(currentRow);
             rowsOnCurrentPage = 0;
@@ -864,6 +863,18 @@ export const generateExcelFromV3Template = async (
             applyStylesLocal(row, fd.styles);
             row.commit();
         }
+        // フッターの結合セルを再適用
+        for (const merge of merges) {
+            const match = merge.match(/^([A-Z]+)(\d+):([A-Z]+)(\d+)$/);
+            if (!match) continue;
+            const origStartRow = parseInt(match[2], 10);
+            const origEndRow = parseInt(match[4], 10);
+            if (origStartRow >= footerStartRow && origEndRow <= footerStartRow + footer_rows - 1) {
+                const offset = startRow - footerStartRow;
+                const newMerge = `${match[1]}${origStartRow + offset}:${match[3]}${origEndRow + offset}`;
+                try { worksheet.mergeCells(newMerge); } catch { /* already merged */ }
+            }
+        }
         return startRow + footerRowsData.length;
     };
 
@@ -901,9 +912,8 @@ export const generateExcelFromV3Template = async (
         if (currentPageHeight + totalItemHeight > pageDataHeight && currentPageHeight > 0) {
             currentRow = writeFooters(currentRow);
 
-            if (!wsModel.pageSetup) wsModel.pageSetup = {};
-            if (!wsModel.rowBreaks) wsModel.rowBreaks = [];
-            wsModel.rowBreaks.push(currentRow - 1);
+            // ページブレークを挿入（フッター直後の行に設定）
+            worksheet.getRow(currentRow).addPageBreak();
 
             if (repeat_header) {
                 currentRow = writeHeaders(currentRow);
