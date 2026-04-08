@@ -688,7 +688,7 @@ export const generateExcelFromV3Template = async (
     }
 
     const { print_area, column_regions } = mappingJson;
-    const { data_start_row, data_end_row, repeat_header, footer_rows } = print_area;
+    const { data_start_row, data_end_row } = print_area;
 
     const colCount = worksheet.columnCount || 20;
 
@@ -702,21 +702,6 @@ export const generateExcelFromV3Template = async (
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const wsModel = worksheet as any;
     const merges: string[] = wsModel.model?.merges ? [...wsModel.model.merges] : [];
-
-    // ヘッダー行を記憶（data_start_row より前）
-    const headerRowCount = data_start_row - 1;
-    const headerRowsData: { cells: { col: number; value: unknown }[]; height: number | undefined; styles: CellStyle[] }[] = [];
-    for (let r = 1; r < data_start_row; r++) {
-        const row = worksheet.getRow(r);
-        const cells: { col: number; value: unknown }[] = [];
-        const styles: CellStyle[] = [];
-        for (let c = 1; c <= colCount; c++) {
-            const cell = row.getCell(c);
-            cells.push({ col: c, value: cell.value });
-            styles.push(captureCellStyle(cell, c));
-        }
-        headerRowsData.push({ cells, height: row.height || undefined, styles });
-    }
 
     // column_regions を行グループに分割
     const rowGroups = groupRegionsByRow(column_regions);
@@ -765,21 +750,7 @@ export const generateExcelFromV3Template = async (
         }
     }
 
-    // フッター行を記憶
     const totalOriginalRows = worksheet.rowCount;
-    const footerStartRow = data_end_row + 1;
-    const footerRowsData: { cells: { col: number; value: unknown }[]; height: number | undefined; styles: CellStyle[] }[] = [];
-    for (let r = footerStartRow; r <= Math.min(footerStartRow + footer_rows - 1, totalOriginalRows); r++) {
-        const row = worksheet.getRow(r);
-        const cells: { col: number; value: unknown }[] = [];
-        const styles: CellStyle[] = [];
-        for (let c = 1; c <= colCount; c++) {
-            const cell = row.getCell(c);
-            cells.push({ col: c, value: cell.value });
-            styles.push(captureCellStyle(cell, c));
-        }
-        footerRowsData.push({ cells, height: row.height || undefined, styles });
-    }
 
     // データ領域をクリア
     if (wsModel.model?.merges) {
@@ -826,58 +797,6 @@ export const generateExcelFromV3Template = async (
         }
     };
 
-    const writeHeaders = (startRow: number): number => {
-        for (let i = 0; i < headerRowsData.length; i++) {
-            const hd = headerRowsData[i];
-            const row = worksheet.getRow(startRow + i);
-            if (hd.height !== undefined) row.height = hd.height;
-            for (const c of hd.cells) {
-                row.getCell(c.col).value = c.value as ExcelJS.CellValue;
-            }
-            applyStylesLocal(row, hd.styles);
-            row.commit();
-        }
-        // ヘッダーの結合セルを再適用
-        for (const merge of merges) {
-            const match = merge.match(/^([A-Z]+)(\d+):([A-Z]+)(\d+)$/);
-            if (!match) continue;
-            const origStartRow = parseInt(match[2], 10);
-            const origEndRow = parseInt(match[4], 10);
-            if (origStartRow < data_start_row) {
-                const offset = startRow - 1;
-                const newMerge = `${match[1]}${origStartRow + offset}:${match[3]}${origEndRow + offset}`;
-                try { worksheet.mergeCells(newMerge); } catch { /* already merged */ }
-            }
-        }
-        return startRow + headerRowsData.length;
-    };
-
-    const writeFooters = (startRow: number): number => {
-        for (let i = 0; i < footerRowsData.length; i++) {
-            const fd = footerRowsData[i];
-            const row = worksheet.getRow(startRow + i);
-            if (fd.height !== undefined) row.height = fd.height;
-            for (const c of fd.cells) {
-                row.getCell(c.col).value = c.value as ExcelJS.CellValue;
-            }
-            applyStylesLocal(row, fd.styles);
-            row.commit();
-        }
-        // フッターの結合セルを再適用
-        for (const merge of merges) {
-            const match = merge.match(/^([A-Z]+)(\d+):([A-Z]+)(\d+)$/);
-            if (!match) continue;
-            const origStartRow = parseInt(match[2], 10);
-            const origEndRow = parseInt(match[4], 10);
-            if (origStartRow >= footerStartRow && origEndRow <= footerStartRow + footer_rows - 1) {
-                const offset = startRow - footerStartRow;
-                const newMerge = `${match[1]}${origStartRow + offset}:${match[3]}${origEndRow + offset}`;
-                try { worksheet.mergeCells(newMerge); } catch { /* already merged */ }
-            }
-        }
-        return startRow + footerRowsData.length;
-    };
-
     // 議題データを展開
     for (const item of flatAgendas) {
         const indent = '\u3000'.repeat(item.depth);
@@ -908,16 +827,9 @@ export const generateExcelFromV3Template = async (
             totalItemHeight += h;
         }
 
-        // 改ページ判定
+        // 改ページ判定（ページブレークマーカーのみ挿入、ヘッダー/フッターは静的コンテンツとして触らない）
         if (currentPageHeight + totalItemHeight > pageDataHeight && currentPageHeight > 0) {
-            currentRow = writeFooters(currentRow);
-
-            // ページブレークを挿入（フッター直後の行に設定）
             worksheet.getRow(currentRow).addPageBreak();
-
-            if (repeat_header) {
-                currentRow = writeHeaders(currentRow);
-            }
             currentPageHeight = 0;
         }
 
@@ -965,9 +877,6 @@ export const generateExcelFromV3Template = async (
         currentRow += rowsPerItem;
         currentPageHeight += totalItemHeight;
     }
-
-    // 最後のフッターを書き込み
-    writeFooters(currentRow);
 
     // 列幅を復元
     for (let c = 1; c <= columnWidths.length; c++) {
