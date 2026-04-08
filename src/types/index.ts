@@ -71,6 +71,8 @@ export interface ColumnRegion {
     col_start: string;
     col_end: string;
     label: string;
+    /** テンプレート内での行オフセット（0始まり）。複数行パターン時に使用。 */
+    row_offset?: number;
 }
 
 export interface PrintArea {

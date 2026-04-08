@@ -11,6 +11,49 @@ const ALL_TAGS = [TAG_TITLE, TAG_SPEAKER, TAG_CONTENT];
 const DEFAULT_ROWS_PER_PAGE = 40;
 
 /**
+ * column_regions を行スロットにグループ分けする。
+ * row_offset があればそれを使い、なければ列範囲の重複を検出して自動グループ化。
+ */
+const groupRegionsByRow = (regions: ColumnRegion[]): ColumnRegion[][] => {
+    // row_offset が設定されているか確認
+    const hasRowOffset = regions.some(r => r.row_offset !== undefined && r.row_offset > 0);
+
+    if (hasRowOffset) {
+        // row_offset ベースでグループ化
+        const maxOffset = Math.max(...regions.map(r => r.row_offset ?? 0));
+        const groups: ColumnRegion[][] = Array.from({ length: maxOffset + 1 }, () => []);
+        for (const region of regions) {
+            groups[region.row_offset ?? 0].push(region);
+        }
+        return groups.filter(g => g.length > 0);
+    }
+
+    // row_offset なし: 列範囲の重複を検出して自動グループ化
+    const groups: ColumnRegion[][] = [];
+    for (const region of regions) {
+        const startCol = colLetterToNumber(region.col_start);
+        const endCol = colLetterToNumber(region.col_end);
+        let placed = false;
+        for (const group of groups) {
+            const overlaps = group.some(existing => {
+                const eStart = colLetterToNumber(existing.col_start);
+                const eEnd = colLetterToNumber(existing.col_end);
+                return startCol <= eEnd && endCol >= eStart;
+            });
+            if (!overlaps) {
+                group.push(region);
+                placed = true;
+                break;
+            }
+        }
+        if (!placed) {
+            groups.push([region]);
+        }
+    }
+    return groups;
+};
+
+/**
  * セル値からプレーンテキストを抽出する。
  * RichText / Formula / その他の型に対応。
  */
@@ -138,6 +181,7 @@ const detectColumnRegions = (
     const regions: ColumnRegion[] = [];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const merges: string[] = (worksheet as any).model?.merges || [];
+    const firstRow = templateRowNumbers.length > 0 ? templateRowNumbers[0] : 1;
 
     for (const rowNum of templateRowNumbers) {
         const row = worksheet.getRow(rowNum);
@@ -183,6 +227,7 @@ const detectColumnRegions = (
                 col_start: colNumberToLetter(colStart),
                 col_end: colNumberToLetter(colEnd),
                 label,
+                row_offset: rowNum - firstRow,
             });
         }
     }
@@ -674,23 +719,50 @@ export const generateExcelFromV3Template = async (
         headerRowsData.push({ cells, height: row.height || undefined, styles });
     }
 
-    // テンプレート行（データ領域の最初の1行）のスタイルを記憶
-    const templateRow = worksheet.getRow(data_start_row);
-    const templateStyles: CellStyle[] = [];
-    for (let c = 1; c <= colCount; c++) {
-        templateStyles.push(captureCellStyle(templateRow.getCell(c), c));
-    }
-    const templateRowHeight = templateRow.height || 15;
+    // column_regions を行グループに分割
+    const rowGroups = groupRegionsByRow(column_regions);
+    const rowsPerItem = rowGroups.length;
 
-    // テンプレート行の結合セル情報を抽出
+    // 各行グループのテンプレート行スタイルを記憶
+    const templateStylesPerRow: CellStyle[][] = [];
+    const templateRowHeights: number[] = [];
+    for (let r = 0; r < rowsPerItem; r++) {
+        const row = worksheet.getRow(data_start_row + r);
+        const styles: CellStyle[] = [];
+        for (let c = 1; c <= colCount; c++) {
+            styles.push(captureCellStyle(row.getCell(c), c));
+        }
+        templateStylesPerRow.push(styles);
+        templateRowHeights.push(row.height || 15);
+    }
+    const templateRowHeight = templateRowHeights[0];
+
+    // column_region がカバーする列範囲を構築（テンプレートマージの競合排除用）
+    const regionCoveredRanges = column_regions.map(r => ({
+        start: colLetterToNumber(r.col_start),
+        end: colLetterToNumber(r.col_end),
+        rowOffset: r.row_offset ?? 0,
+    }));
+
+    // テンプレート行の結合セル情報を抽出（パターン行のみ）
     const templateMerges: string[] = [];
     for (const merge of merges) {
         const match = merge.match(/^([A-Z]+)(\d+):([A-Z]+)(\d+)$/);
         if (!match) continue;
         const startRow = parseInt(match[2], 10);
         const endRow = parseInt(match[4], 10);
-        if (startRow >= data_start_row && endRow <= data_end_row) {
-            templateMerges.push(merge);
+        // パターン行の範囲内かつ単一行の結合のみ
+        if (startRow >= data_start_row && endRow < data_start_row + rowsPerItem && startRow === endRow) {
+            // column_region とカバー範囲が重複する結合はスキップ
+            const mStartCol = colLetterToNumber(match[1]);
+            const mEndCol = colLetterToNumber(match[3]);
+            const rowOffset = startRow - data_start_row;
+            const overlapsWithRegion = regionCoveredRanges.some(r =>
+                r.rowOffset === rowOffset && mStartCol <= r.end && mEndCol >= r.start
+            );
+            if (!overlapsWithRegion) {
+                templateMerges.push(merge);
+            }
         }
     }
 
@@ -809,18 +881,24 @@ export const generateExcelFromV3Template = async (
             resolvedValues.set(region.tag, value);
         }
 
-        // 行高さを計算（最大の折り返し行数に基づく）
-        let maxWrapLines = 1;
-        for (const region of column_regions) {
-            const text = resolvedValues.get(region.tag) || '';
-            const cellWidth = regionWidths.get(region.tag) || 8.43;
-            const wrapLines = calcWrapLineCount(text, cellWidth);
-            maxWrapLines = Math.max(maxWrapLines, wrapLines);
+        // 行グループごとの行高さを計算
+        const rowHeights: number[] = [];
+        let totalItemHeight = 0;
+        for (let g = 0; g < rowGroups.length; g++) {
+            let maxWrapLines = 1;
+            for (const region of rowGroups[g]) {
+                const text = resolvedValues.get(region.tag) || '';
+                const cellWidth = regionWidths.get(region.tag) || 8.43;
+                const wrapLines = calcWrapLineCount(text, cellWidth);
+                maxWrapLines = Math.max(maxWrapLines, wrapLines);
+            }
+            const h = calcRowHeight(maxWrapLines, templateRowHeights[g] || templateRowHeight);
+            rowHeights.push(h);
+            totalItemHeight += h;
         }
-        const rowHeight = calcRowHeight(maxWrapLines, templateRowHeight);
 
         // 改ページ判定
-        if (currentPageHeight + rowHeight > pageDataHeight && currentPageHeight > 0) {
+        if (currentPageHeight + totalItemHeight > pageDataHeight && currentPageHeight > 0) {
             currentRow = writeFooters(currentRow);
 
             if (!wsModel.pageSetup) wsModel.pageSetup = {};
@@ -833,48 +911,49 @@ export const generateExcelFromV3Template = async (
             currentPageHeight = 0;
         }
 
-        // データ行を書き込み
-        const row = worksheet.getRow(currentRow);
-        row.height = rowHeight;
+        // 各行グループのデータを書き込み
+        for (let g = 0; g < rowGroups.length; g++) {
+            const row = worksheet.getRow(currentRow + g);
+            row.height = rowHeights[g];
 
-        // テンプレート行のスタイルを適用
-        applyStylesLocal(row, templateStyles);
+            // テンプレート行のスタイルを適用
+            applyStylesLocal(row, templateStylesPerRow[g] || templateStylesPerRow[0]);
 
-        // 列範囲ベースでデータを書き込む（セル結合 + 書き込み）
-        for (const region of column_regions) {
-            const startCol = colLetterToNumber(region.col_start);
-            const endCol = colLetterToNumber(region.col_end);
-            const value = resolvedValues.get(region.tag) || '';
+            // 列範囲ベースでデータを書き込む（セル結合 + 書き込み）
+            for (const region of rowGroups[g]) {
+                const startCol = colLetterToNumber(region.col_start);
+                const endCol = colLetterToNumber(region.col_end);
+                const value = resolvedValues.get(region.tag) || '';
 
-            // col_start 〜 col_end を結合（複数列にまたがる場合）
-            if (startCol !== endCol) {
-                try {
-                    worksheet.mergeCells(currentRow, startCol, currentRow, endCol);
-                } catch { /* already merged */ }
+                if (startCol !== endCol) {
+                    try {
+                        worksheet.mergeCells(currentRow + g, startCol, currentRow + g, endCol);
+                    } catch { /* already merged */ }
+                }
+
+                const cell = row.getCell(startCol);
+                cell.value = value;
+                cell.alignment = { ...cell.alignment, wrapText: true, vertical: 'top' };
             }
 
-            const cell = row.getCell(startCol);
-            cell.value = value;
-            cell.alignment = { ...cell.alignment, wrapText: true, vertical: 'top' };
-        }
-
-        // テンプレート行の結合セルパターンを再適用
-        for (const merge of templateMerges) {
-            const match = merge.match(/^([A-Z]+)(\d+):([A-Z]+)(\d+)$/);
-            if (!match) continue;
-            const rowShift = currentRow - data_start_row;
-            const origStartRow = parseInt(match[2], 10);
-            const origEndRow = parseInt(match[4], 10);
-            // 単一行の結合のみ再適用（複数行結合は1データ行では不適切）
-            if (origStartRow === origEndRow) {
-                const newMerge = `${match[1]}${origStartRow + rowShift}:${match[3]}${origEndRow + rowShift}`;
+            // テンプレート行の結合セルパターンを再適用（column_region 外の装飾的結合のみ）
+            for (const merge of templateMerges) {
+                const match = merge.match(/^([A-Z]+)(\d+):([A-Z]+)(\d+)$/);
+                if (!match) continue;
+                const origRow = parseInt(match[2], 10);
+                const mergeRowOffset = origRow - data_start_row;
+                // この行グループに属する結合のみ適用
+                if (mergeRowOffset !== g) continue;
+                const rowShift = currentRow - data_start_row;
+                const newMerge = `${match[1]}${origRow + rowShift}:${match[3]}${parseInt(match[4], 10) + rowShift}`;
                 try { worksheet.mergeCells(newMerge); } catch { /* skip */ }
             }
+
+            row.commit();
         }
 
-        row.commit();
-        currentRow++;
-        currentPageHeight += rowHeight;
+        currentRow += rowsPerItem;
+        currentPageHeight += totalItemHeight;
     }
 
     // 最後のフッターを書き込み
