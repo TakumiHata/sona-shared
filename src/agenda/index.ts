@@ -1,5 +1,4 @@
 import type { AgendaItem, FlatAgendaWithDepth } from '../types';
-import { stripMeetingSummaryTags } from '../tags';
 
 const AGENDA_TAG_RE = /<agenda[^>]*>([\s\S]*?)<\/agenda>/g;
 
@@ -15,12 +14,10 @@ export function hasAgendaTags(text: string): boolean {
  * - <agenda> タグがない場合: 従来通り全ての見出しを議題として認識（後方互換）
  */
 export const parseAgendaMarkdown = (text: string): AgendaItem[] => {
-    // <meeting-summary> はインポート時に除去（出力時のみ生成）
-    const cleaned = stripMeetingSummaryTags(text);
-    if (hasAgendaTags(cleaned)) {
-        return parseWithAgendaTags(cleaned);
+    if (hasAgendaTags(text)) {
+        return parseWithAgendaTags(text);
     }
-    return parseLegacy(cleaned);
+    return parseLegacy(text);
 };
 
 function parseWithAgendaTags(text: string): AgendaItem[] {
@@ -283,7 +280,7 @@ export const buildMarkdownFromAgendas = (
 
             if (item.summaryText) {
                 sections.push('');
-                sections.push(`<meeting-summary>\n\n${item.summaryText}\n\n</meeting-summary>`);
+                sections.push(item.summaryText);
             }
 
             if (item.refinedTranscript) {
