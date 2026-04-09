@@ -24,6 +24,7 @@ export interface AgendaItem {
     originalDescription?: string;
     rawTranscript?: string;
     refinedTranscript?: string;
+    summaryText?: string;
     durationMinutes?: number;
     speaker?: string | null;
     children?: AgendaItem[];

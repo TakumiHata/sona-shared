@@ -897,12 +897,12 @@ export const generateExcelBuffer = async (
     const flatAgendas = flattenAgendasWithDepth(agendas);
     const workbook = new ExcelJSModule.Workbook();
 
-    // --- SHEET 1: 議事録(AI清書) ---
-    const sheet1 = workbook.addWorksheet('議事録(AI清書)');
+    // --- SHEET 1: 議事録(要約) ---
+    const sheet1 = workbook.addWorksheet('議事録(要約)');
 
     sheet1.columns = [
         { header: '議題', key: 'title', width: 30 },
-        { header: '内容', key: 'content', width: 60 },
+        { header: '要約', key: 'summary', width: 60 },
         { header: '発言者', key: 'speaker', width: 15 },
     ];
 
@@ -910,7 +910,7 @@ export const generateExcelBuffer = async (
         const indent = '\u3000'.repeat(item.depth);
         sheet1.addRow({
             title: `${indent}${item.title}`,
-            content: item.refinedTranscript || item.rawTranscript || '',
+            summary: item.summaryText || item.refinedTranscript || item.rawTranscript || '',
             speaker: item.speaker || '',
         });
     });
@@ -927,20 +927,20 @@ export const generateExcelBuffer = async (
         row.commit();
     });
 
-    // --- SHEET 2: 原文ログ(検索用) ---
-    const sheet2 = workbook.addWorksheet('原文ログ(検索用)');
+    // --- SHEET 2: 清書ログ ---
+    const sheet2 = workbook.addWorksheet('清書ログ');
 
     sheet2.columns = [
-        { header: '対象議題', key: 'title', width: 25 },
+        { header: '議題', key: 'title', width: 30 },
+        { header: '清書内容', key: 'content', width: 70 },
         { header: '発言者', key: 'speaker', width: 15 },
-        { header: '原文テキスト', key: 'content', width: 80 },
     ];
 
     flatAgendas.forEach(item => {
         sheet2.addRow({
             title: item.title,
+            content: item.refinedTranscript || item.rawTranscript || '',
             speaker: item.speaker || '',
-            content: item.rawTranscript || ''
         });
     });
 

@@ -278,6 +278,11 @@ export const buildMarkdownFromAgendas = (
                 sections.push(`${prefix} ${item.title}`);
             }
 
+            if (item.summaryText) {
+                sections.push('');
+                sections.push(`<fixed>\n\n${item.summaryText}\n\n</fixed>`);
+            }
+
             if (item.refinedTranscript) {
                 if (item.originalDescription) {
                     sections.push('');

@@ -66,6 +66,9 @@ export function sanitizeAgendasForExport(agendas: AgendaItem[]): AgendaItem[] {
     if (sanitized.refinedTranscript) {
       sanitized.refinedTranscript = stripDetailsTags(stripAgendaTags(stripFixedTags(stripPreviewOnly(sanitized.refinedTranscript))));
     }
+    if (sanitized.summaryText) {
+      sanitized.summaryText = stripDetailsTags(stripAgendaTags(stripFixedTags(stripPreviewOnly(sanitized.summaryText))));
+    }
 
     if (sanitized.children) {
       sanitized.children = sanitizeAgendasForExport(sanitized.children);
