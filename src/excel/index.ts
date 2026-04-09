@@ -86,7 +86,7 @@ const resolveTagValue = (template: string, item: FlatAgendaWithDepth): string =>
     let resolved = template;
     resolved = resolved.replace(TAG_TITLE, `${indent}${item.title}`);
     resolved = resolved.replace(TAG_SPEAKER, item.speaker || '');
-    resolved = resolved.replace(TAG_CONTENT, item.refinedTranscript || item.rawTranscript || '');
+    resolved = resolved.replace(TAG_CONTENT, item.summaryText || item.refinedTranscript || item.rawTranscript || '');
     return resolved;
 };
 
@@ -807,7 +807,7 @@ export const generateExcelFromV3Template = async (
             let value = '';
             if (region.tag === TAG_TITLE) value = `${indent}${item.title}`;
             else if (region.tag === TAG_SPEAKER) value = item.speaker || '';
-            else if (region.tag === TAG_CONTENT) value = item.refinedTranscript || item.rawTranscript || '';
+            else if (region.tag === TAG_CONTENT) value = item.summaryText || item.refinedTranscript || item.rawTranscript || '';
             resolvedValues.set(region.tag, value);
         }
 
