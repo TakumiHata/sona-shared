@@ -752,13 +752,13 @@ export const generateExcelFromV3Template = async (
 
     const totalOriginalRows = worksheet.rowCount;
 
-    // データ領域をクリア
-    if (wsModel.model?.merges) {
-        // テンプレート行以降の結合セルを解除
-        wsModel.model.merges = merges.filter((merge: string) => {
-            const match = merge.match(/^[A-Z]+(\d+):/);
-            return match ? parseInt(match[1], 10) < data_start_row : true;
-        });
+    // データ領域をクリア — 結合セルを正しく解除してからセル値をクリア
+    const mergesToRemove = merges.filter((merge: string) => {
+        const match = merge.match(/^[A-Z]+(\d+):/);
+        return match ? parseInt(match[1], 10) >= data_start_row : false;
+    });
+    for (const merge of mergesToRemove) {
+        try { worksheet.unMergeCells(merge); } catch { /* skip */ }
     }
     for (let r = data_start_row; r <= totalOriginalRows; r++) {
         const row = worksheet.getRow(r);
@@ -849,8 +849,9 @@ export const generateExcelFromV3Template = async (
 
                 if (startCol !== endCol) {
                     try {
-                        worksheet.mergeCells(currentRow + g, startCol, currentRow + g, endCol);
-                    } catch { /* already merged */ }
+                        worksheet.unMergeCells(currentRow + g, startCol, currentRow + g, endCol);
+                    } catch { /* not merged */ }
+                    worksheet.mergeCells(currentRow + g, startCol, currentRow + g, endCol);
                 }
 
                 const cell = row.getCell(startCol);
