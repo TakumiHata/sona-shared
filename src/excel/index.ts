@@ -81,11 +81,39 @@ const cellContainsTag = (value: unknown): boolean => {
     return ALL_TAGS.some(tag => text.includes(tag));
 };
 
+/**
+ * rawTranscript から発言者名のユニーク一覧を抽出する。
+ * SonaCore は `${speaker}: ${text}` 形式で行を連結しているため、
+ * 各行の先頭から最初の `:` までを話者名として抽出する。
+ *
+ * 30 文字超の名前は誤検出 (URL や時刻など) として除外する。
+ */
+const extractParticipants = (rawTranscript: string | undefined | null): string[] => {
+    if (!rawTranscript) return [];
+    const speakers = new Set<string>();
+    for (const line of rawTranscript.split('\n')) {
+        const match = line.match(/^([^:\n]{1,30}?):\s/);
+        if (!match) continue;
+        const name = match[1].trim();
+        if (name.length > 0) speakers.add(name);
+    }
+    return [...speakers];
+};
+
+/**
+ * 議題に紐付く発言者表示文字列を返す。
+ * 優先順位: AgendaItem.speaker (手動指定) → rawTranscript からの抽出
+ */
+const resolveSpeakerDisplay = (item: AgendaItem): string => {
+    if (item.speaker && item.speaker.trim().length > 0) return item.speaker;
+    return extractParticipants(item.rawTranscript).join(', ');
+};
+
 const resolveTagValue = (template: string, item: FlatAgendaWithDepth): string => {
     const indent = '\u3000'.repeat(item.depth);
     let resolved = template;
     resolved = resolved.replace(TAG_TITLE, `${indent}${item.title}`);
-    resolved = resolved.replace(TAG_SPEAKER, item.speaker || '');
+    resolved = resolved.replace(TAG_SPEAKER, resolveSpeakerDisplay(item));
     resolved = resolved.replace(TAG_CONTENT, item.summaryText || item.refinedTranscript || item.rawTranscript || '');
     return resolved;
 };
@@ -806,7 +834,7 @@ export const generateExcelFromV3Template = async (
         for (const region of column_regions) {
             let value = '';
             if (region.tag === TAG_TITLE) value = `${indent}${item.title}`;
-            else if (region.tag === TAG_SPEAKER) value = item.speaker || '';
+            else if (region.tag === TAG_SPEAKER) value = resolveSpeakerDisplay(item);
             else if (region.tag === TAG_CONTENT) value = item.summaryText || item.refinedTranscript || item.rawTranscript || '';
             resolvedValues.set(region.tag, value);
         }
