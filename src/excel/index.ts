@@ -109,12 +109,34 @@ const resolveSpeakerDisplay = (item: AgendaItem): string => {
     return extractParticipants(item.rawTranscript).join(', ');
 };
 
+/**
+ * 単一話者の議題では rawTranscript の `名前: ` プレフィックスが
+ * {{speaker}} 列と冗長になるため、各行先頭から除去する。
+ * 複数話者の場合は who-said-what の文脈を保つため除去しない。
+ */
+const stripSingleSpeakerPrefix = (content: string, speakers: string[]): string => {
+    if (speakers.length !== 1 || !content) return content;
+    const escaped = speakers[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(`^${escaped}:\\s`, 'gm');
+    return content.replace(pattern, '');
+};
+
+/**
+ * {{content}} の解決値を返す。優先順位は summaryText → refinedTranscript → rawTranscript。
+ * 単一話者の場合は冗長な `名前: ` プレフィックスを除去する。
+ */
+const resolveContent = (item: AgendaItem): string => {
+    const raw = item.summaryText || item.refinedTranscript || item.rawTranscript || '';
+    if (!raw) return '';
+    return stripSingleSpeakerPrefix(raw, extractParticipants(item.rawTranscript));
+};
+
 const resolveTagValue = (template: string, item: FlatAgendaWithDepth): string => {
     const indent = '\u3000'.repeat(item.depth);
     let resolved = template;
     resolved = resolved.replace(TAG_TITLE, `${indent}${item.title}`);
     resolved = resolved.replace(TAG_SPEAKER, resolveSpeakerDisplay(item));
-    resolved = resolved.replace(TAG_CONTENT, item.summaryText || item.refinedTranscript || item.rawTranscript || '');
+    resolved = resolved.replace(TAG_CONTENT, resolveContent(item));
     return resolved;
 };
 
@@ -835,7 +857,7 @@ export const generateExcelFromV3Template = async (
             let value = '';
             if (region.tag === TAG_TITLE) value = `${indent}${item.title}`;
             else if (region.tag === TAG_SPEAKER) value = resolveSpeakerDisplay(item);
-            else if (region.tag === TAG_CONTENT) value = item.summaryText || item.refinedTranscript || item.rawTranscript || '';
+            else if (region.tag === TAG_CONTENT) value = resolveContent(item);
             resolvedValues.set(region.tag, value);
         }
 
