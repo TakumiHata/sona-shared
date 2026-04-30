@@ -885,37 +885,41 @@ export const generateExcelFromV3Template = async (
 
         // 各行グループのデータを書き込み
         for (let g = 0; g < rowGroups.length; g++) {
-            const row = worksheet.getRow(currentRow + g);
+            const targetRow = currentRow + g;
+            const row = worksheet.getRow(targetRow);
             row.height = rowHeights[g];
 
-            // テンプレート行のスタイルを適用
-            applyStylesLocal(row, templateStylesPerRow[g] || templateStylesPerRow[0]);
-
-            // 列範囲ベースでデータを書き込む（セル結合 + 書き込み）
+            // Step 1: セル結合を先に確立（applyStylesLocal より前）
+            // applyStylesLocal が slave cell を触る前に merge 状態を確定させることで
+            // ExcelJS の cell type が Merge になった状態でスタイルが適用される
             for (const region of rowGroups[g]) {
                 const startCol = colLetterToNumber(region.col_start);
                 const endCol = colLetterToNumber(region.col_end);
-                const value = resolvedValues.get(region.tag) || '';
-
-                if (startCol !== endCol) {
-                    try {
-                        worksheet.unMergeCells(currentRow + g, startCol, currentRow + g, endCol);
-                    } catch { /* not merged */ }
-                    worksheet.mergeCells(currentRow + g, startCol, currentRow + g, endCol);
+                if (startCol < endCol) {
+                    try { worksheet.unMergeCells(targetRow, startCol, targetRow, endCol); } catch { /* not merged */ }
+                    worksheet.mergeCells(targetRow, startCol, targetRow, endCol);
                 }
+            }
 
-                const cell = row.getCell(startCol);
+            // Step 2: テンプレート行のスタイルを適用
+            applyStylesLocal(row, templateStylesPerRow[g] || templateStylesPerRow[0]);
+
+            // Step 3: 値を書き込む
+            // worksheet.getCell() を使うことで mergeCells 後の最新セル参照を取得する
+            for (const region of rowGroups[g]) {
+                const startCol = colLetterToNumber(region.col_start);
+                const value = resolvedValues.get(region.tag) || '';
+                const cell = worksheet.getCell(targetRow, startCol);
                 cell.value = value;
                 cell.alignment = { ...cell.alignment, wrapText: true, vertical: 'top' };
             }
 
-            // テンプレート行の結合セルパターンを再適用（column_region 外の装飾的結合のみ）
+            // Step 4: テンプレート行の結合セルパターンを再適用（column_region 外の装飾的結合のみ）
             for (const merge of templateMerges) {
                 const match = merge.match(/^([A-Z]+)(\d+):([A-Z]+)(\d+)$/);
                 if (!match) continue;
                 const origRow = parseInt(match[2], 10);
                 const mergeRowOffset = origRow - data_start_row;
-                // この行グループに属する結合のみ適用
                 if (mergeRowOffset !== g) continue;
                 const rowShift = currentRow - data_start_row;
                 const newMerge = `${match[1]}${origRow + rowShift}:${match[3]}${parseInt(match[4], 10) + rowShift}`;
